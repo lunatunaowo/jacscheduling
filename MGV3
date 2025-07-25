@@ -1,0 +1,223 @@
+function onEdit(e) {
+  const sheet = e.source.getActiveSheet();
+  const row = e.range.rowStart;
+  const col = e.range.columnStart;
+  const approvedCol = 10; // Column J
+
+  if (sheet.getName() !== "Form_Responses") return;
+  if (col !== approvedCol) return;
+
+  const approvedValue = sheet.getRange(row, approvedCol).getValue();
+  if (approvedValue === "Yes") {
+    logEvent("Approval found on row " + row + ", starting processApproval.");
+    processApproval(sheet, row);
+  }
+}
+
+
+// === Booking Logic ===
+function processApproval(sheet, row) {
+  var statusCell = sheet.getRange(row, 11); // K
+  var name = sheet.getRange(row, 2).getValue(); // B
+  var vehicleString = sheet.getRange(row, 3).getValue(); // C
+  var vehicles = vehicleString.split(",").map(function(s){ return s.trim(); }).filter(String);
+  var startTime = new Date(sheet.getRange(row, 4).getValue()); // D
+  var endTime = new Date(sheet.getRange(row, 5).getValue()); // E
+  var reason = sheet.getRange(row, 6).getValue(); // F
+  var email = sheet.getRange(row, 7).getValue(); // G
+  var additionalNotes = sheet.getRange(row, 9).getValue(); // I
+
+  var conflict = false;
+  var conflictDetails = "";
+
+  vehicles.forEach(function(vehicle) {
+    logEvent("Checking vehicle: " + vehicle);
+    if (!vehicle) return;
+    var calendarId = getCalendarIdForVehicle(vehicle);
+    if (!calendarId) {
+      conflict = true;
+      conflictDetails += "\nNo calendar linked for: " + vehicle;
+      return;
+    }
+    var calendar = CalendarApp.getCalendarById(calendarId);
+    if (!calendar) {
+      conflict = true;
+      conflictDetails += "\nCalendar not found for: " + vehicle;
+      return;
+    }
+    if (checkConflicts(calendar, startTime, endTime)) {
+      conflict = true;
+      conflictDetails += "\nTime conflict on: " + vehicle;
+    }
+  });
+
+  if (conflict) {
+    statusCell.setValue("Conflict found");
+    sendEmail("hong@ltsauto.com.au",
+      "Booking Conflict",
+      "Booking by " + name + " from " + startTime + " to " + endTime +
+      " has conflicts:\n" + conflictDetails + "\nReason: " + reason + "\nAdditional Notes: " + additionalNotes);
+    logEvent("Conflict found: " + conflictDetails);
+  } else {
+    vehicles.forEach(function(vehicle) {
+      if (!vehicle) return;
+      var calendarId = getCalendarIdForVehicle(vehicle);
+      var calendar = CalendarApp.getCalendarById(calendarId);
+
+      var titleNotes = reason;
+      if (additionalNotes) {
+        titleNotes += " | " + additionalNotes;
+      }
+      var title = name + " (" + vehicle + ") - " + titleNotes;
+
+      calendar.createEvent(title, startTime, endTime, {
+        description: "Booking by " + name + "\nVehicle: " + vehicle +
+          "\nReason: " + reason + "\nAdditional Notes: " + additionalNotes
+      });
+
+      logEvent("Booked event for: " + vehicle);
+    });
+
+    statusCell.setValue("Events Created");
+    generateCalendarViewSheet(); // Automatically refresh Gantt after booking
+    sendEmail(email,
+      "Booking Confirmed",
+      "Hi " + name + ",\n\nYour booking for: " + vehicles.join(", ") +
+      " from " + startTime + " to " + endTime + " is confirmed.\n\nReason: " + reason +
+      "\nAdditional Notes: " + additionalNotes +
+      "\n\n- Lotus Auto Fleet");
+  }
+}
+function generateCalendarViewSheet() {
+  const startTime = new Date();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetName = "Calendar_View";
+  const timezone = "Australia/Sydney";
+  const monthsToShow = 12;
+
+  const vehicleMap = {
+    "Pre production 1": "c_b60df68939a8d391de3adb132efdbea56cda88bb8a63d1e99812e7dd1c0e7d94@group.calendar.google.com",
+    "Pre production 2": "c_1f7ea8539f25daf928912f168f128b1ab855a0a3922ccb004816a6bad09a7c92@group.calendar.google.com",
+    "Pre production 3": "c_b3eeda66117b475814ff74eee7e497f735db6d9a7011d9b93390b99e88e59cd3@group.calendar.google.com",
+    "testing sample 1": "c_713c1916494e9da1a2a367be083c639b4e76de5a50cbdd3e85884ee9dd14edce@group.calendar.google.com",
+    "testing sample 2": "c_507c886b99e304b9302e3e905e6e769469620bdb52cdee99c6413e1c39ff88ae@group.calendar.google.com",
+    "Volume production 1": "c_c0a4a02dfc35802ff05be18703583a53924281a5633264474d3d3bb2511f172c@group.calendar.google.com",
+    "Volume production 2": "c_0e1afa34f242b0ac309ed38d13edfc3e904d851b62ab0fa39c18727b07747773@group.calendar.google.com",
+    "Volume production 3": "c_3d9ace11f746250bfe9852f197e39d358bdfdbaf9162299243d0c63c0fda6e96@group.calendar.google.com",
+    "Volume production 4": "c_063e387cfc77a55e9caa2e1256dcc7cac4da1dfad330147461a2ebe201a336c5@group.calendar.google.com",
+    "Volume production 5": "c_133a5e7b5b8a3dfde0c3575c1b938423fc25dd6ff0509b0cc2166162cf9b9fa5@group.calendar.google.com",
+    "Volume production 6": "c_690d6fab920a32fe246c1bf77a82e466228d97f6f77f3237675c6cb1784cbb69@group.calendar.google.com",
+    "Volume production 7": "c_8ba1ec4749525838ee6d4c2abf26aaef6f69eaf77a612cb7a1dfbc2fc4ff7bd1@group.calendar.google.com",
+    "Volume production 8": "c_16697578040aa2c91898ba65d0e4d364acf46fccdab214b7dd7314224ca7734e@group.calendar.google.com",
+    "Volume production 9": "c_4ae2419b572c1b957f0d51e56a3f5e3ef145d068c30532af67517e3dbec9098a@group.calendar.google.com",
+    "Volume production 10": "c_73c72dcd415e9112d47d5dbd74ae6d7c7cd41638974c687ef855ebe99f6ec18f@group.calendar.google.com"
+  };
+
+  const calendarCache = {};
+  for (const [vehicle, id] of Object.entries(vehicleMap)) {
+    calendarCache[vehicle] = CalendarApp.getCalendarById(id);
+  }
+
+  const vehicleNames = Object.keys(vehicleMap);
+  const sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
+  sheet.getRange(1, 1).setValue("⚙️ Updating calendar view... please wait");
+  sheet.setFrozenRows(1);
+  sheet.setFrozenColumns(1);
+
+  let currentRow = 1;
+  const today = new Date();
+
+  for (let m = 0; m < monthsToShow; m++) {
+    const base = new Date(today);
+    base.setMonth(today.getMonth() + m);
+    const year = base.getFullYear();
+    const month = base.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    const header = ["Vehicle"];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = new Date(year, month, d);
+      header.push(Utilities.formatDate(date, timezone, "dd MMM"));
+    }
+
+    const block = [header];
+    const bgArray = [["#d9e1f2", ...Array(daysInMonth).fill("#d9e1f2")]]; // color row 1
+
+    for (let vehicle of vehicleNames) {
+      const row = [vehicle];
+      const calendar = calendarCache[vehicle];
+      const bookingRow = Array(daysInMonth).fill("");
+      const bgRow = Array(daysInMonth).fill("#c6efce"); // default green
+
+      if (calendar) {
+        const monthStart = new Date(year, month, 1);
+        const monthEnd = new Date(year, month + 1, 0, 23, 59, 59);
+        const events = calendar.getEvents(monthStart, monthEnd);
+
+        events.forEach(event => {
+          const evTitle = event.getTitle();
+          const evStart = event.getStartTime();
+          const evEnd = event.getEndTime();
+
+          let titlePlaced = false;
+          for (let d = 0; d < daysInMonth; d++) {
+            const dayStart = new Date(year, month, d + 1, 0, 0, 0);
+            const dayEnd = new Date(year, month, d + 1, 23, 59, 59);
+            if (evEnd >= dayStart && evStart < dayEnd) {
+              bookingRow[d] = titlePlaced ? "__BOOKED__" : evTitle;
+              bgRow[d] = "#ffc7ce"; // red
+              titlePlaced = true;
+            }
+          }
+        });
+      } else {
+        bookingRow.fill("Calendar not found");
+        bgRow.fill("#f4cccc");
+      }
+
+      row.push(...bookingRow);
+      block.push(row);
+      bgArray.push(["#ffffff", ...bgRow]);
+    }
+
+    if (m > 0) {
+      sheet.getRange(currentRow, 1, 1, header.length).setBorder(true, null, null, null, null, null, "black", SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+    }
+
+    const range = sheet.getRange(currentRow, 1, block.length, block[0].length);
+    range.setValues(block);
+    range.setBackgrounds(bgArray);
+
+    // Merge __BOOKED__ blocks
+    for (let i = 1; i < block.length; i++) {
+      let mergeStart = -1;
+      for (let col = 1; col < block[i].length; col++) {
+        const val = block[i][col];
+        if (val === "__BOOKED__") {
+          if (mergeStart === -1) mergeStart = col + 1;
+        } else {
+          if (mergeStart !== -1 && col + 1 > mergeStart) {
+            sheet.getRange(currentRow + i, mergeStart, 1, col - mergeStart + 1).mergeAcross();
+            mergeStart = -1;
+          }
+        }
+      }
+      if (mergeStart !== -1 && block[i].length + 1 > mergeStart) {
+        sheet.getRange(currentRow + i, mergeStart, 1, block[i].length - mergeStart + 1).mergeAcross();
+      }
+    }
+
+    currentRow += block.length;
+  }
+
+  sheet.getRange(currentRow + 1, 1).setValue("Legend:");
+  sheet.getRange(currentRow + 2, 1).setValue("Green = available, Red = booked (title only on first day)");
+
+  if (sheet.getRange(1, 1).getValue().toString().includes("Updating")) {
+    sheet.deleteRow(1);
+  }
+
+  const duration = ((new Date() - startTime) / 1000).toFixed(2);
+  console.log("Gantt generation took " + duration + " seconds");
+}
+
